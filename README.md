@@ -82,7 +82,7 @@ remote_poll_active_ms = 1000   # poll rate while another device plays
 remote_poll_idle_ms = 5000
 library_refresh_secs = 60      # how often playlists are checked for changes
 check_updates = true
-update_repo_owner = "your-github-user"
+update_repo_owner = "RenzoWit35"
 update_repo_name = "talyxel-sound"
 # Optional: use your own Spotify developer app (both required)
 # client_id = "..."
@@ -93,8 +93,11 @@ Logs are written to `talyxel.log` in the data directory. Set `TALYXEL_LOG=debug`
 
 ## Publishing updates
 
-1. Set `update_repo_owner` / `update_repo_name` in the defaults in `src/config.rs` (and
-   `repository` in `Cargo.toml`) to your GitHub repo.
+Updates are fetched from the GitHub repo
+[RenzoWit35/talyxel-sound](https://github.com/RenzoWit35/talyxel-sound). If you fork it, change
+`update_repo_owner` / `update_repo_name` in `src/config.rs` and `repository` in `Cargo.toml`.
+
+1. Create the `talyxel-sound` repo on GitHub and push this code to it.
 2. Bump `version` in `Cargo.toml`, commit, and push a tag: `git tag v0.2.0 && git push --tags`.
 3. `.github/workflows/release.yml` builds Windows, macOS and Linux binaries and attaches them to
    the release. Running copies see the update on their next start.

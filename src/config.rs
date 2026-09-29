@@ -41,7 +41,7 @@ impl Default for Config {
             remote_poll_idle_ms: 5000,
             library_refresh_secs: 60,
             check_updates: true,
-            update_repo_owner: "your-github-user".to_string(),
+            update_repo_owner: "RenzoWit35".to_string(),
             update_repo_name: "talyxel-sound".to_string(),
             client_id: None,
             redirect_uri: None,

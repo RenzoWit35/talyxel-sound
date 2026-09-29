@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Talyxel Sound — a terminal Spotify client and Spotify Connect device"
 license = "MIT"
-repository = "https://github.com/your-github-user/talyxel-sound"
+repository = "https://github.com/RenzoWit35/talyxel-sound"
 
 [[bin]]
 name = "talyxel"
