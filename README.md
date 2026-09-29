@@ -151,7 +151,10 @@ repo name and URLs in `install.sh`, `install.ps1` and the install commands above
 
 1. Create the `talyxel-sound` repo on GitHub and push this code to it. The repo must be public:
    the installers and the updater download without logging in to GitHub.
-2. Bump `version` in `Cargo.toml`, commit, and push a tag: `git tag v0.2.0 && git push --tags`.
+2. Bump `version` in `Cargo.toml`, commit, and push a tag for that exact version with a
+   lowercase `v`: `git tag v0.2.1 && git push --tags`. A release created on GitHub's website
+   needs the same tag. The build stops if the tag and `version` don't match, because the
+   updater would otherwise keep offering the same release.
 3. `.github/workflows/release.yml` builds Windows, macOS and Linux binaries and attaches them to
    the release. Running copies see the update on their next start. The same workflow also runs
    (without publishing) on pull requests that change the build setup.
