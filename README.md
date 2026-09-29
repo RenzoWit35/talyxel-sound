@@ -33,15 +33,45 @@ client, and it shows up in the device list on your phone and desktop.
 
 - **Spotify Premium**. librespot streaming requires it. Without Premium the app still works as
   a remote control for other devices.
-- To build from source: Rust (stable). On Windows you also need the MSVC C++ Build Tools. On
-  Linux you need `libasound2-dev libssl-dev pkg-config`.
 
-## Install / run
+## Install
+
+The installers download the prebuilt app from the latest
+[GitHub release](https://github.com/RenzoWit35/talyxel-sound/releases). You don't need Rust or
+any build tools.
+
+**macOS / Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RenzoWit35/talyxel-sound/master/install.sh | sh
+```
+
+**Windows** (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/RenzoWit35/talyxel-sound/master/install.ps1 | iex
+```
+
+Then run `talyxel`. The first run opens the browser to link Spotify.
+
+Prebuilt binaries are available for Windows x64, macOS (Apple Silicon and Intel) and Linux x64
+(glibc 2.35 or newer, e.g. Ubuntu 22.04+ or Debian 12+). The only thing Linux needs is the ALSA
+sound library (`libasound2`), which desktop distros already include. To install by hand,
+download the archive for your platform from the releases page and put `talyxel` on your `PATH`.
+On macOS, a file downloaded in a browser needs `xattr -d com.apple.quarantine talyxel` before it
+will run.
+
+## Build from source
+
+You need Rust 1.85 or newer. On Windows you also need the MSVC C++ Build Tools. On Linux you
+need `libasound2-dev pkg-config`.
 
 ```bash
 cargo build --release
-./target/release/talyxel          # first run opens the browser to link Spotify
+./target/release/talyxel
 ```
+
+## Usage
 
 | Command            | What it does                                        |
 |--------------------|-----------------------------------------------------|
@@ -95,11 +125,14 @@ Logs are written to `talyxel.log` in the data directory. Set `TALYXEL_LOG=debug`
 
 Updates are fetched from the GitHub repo
 [RenzoWit35/talyxel-sound](https://github.com/RenzoWit35/talyxel-sound). If you fork it, change
-`update_repo_owner` / `update_repo_name` in `src/config.rs` and `repository` in `Cargo.toml`.
+`update_repo_owner` / `update_repo_name` in `src/config.rs`, `repository` in `Cargo.toml`, and the
+repo name and URLs in `install.sh`, `install.ps1` and the install commands above.
 
-1. Create the `talyxel-sound` repo on GitHub and push this code to it.
+1. Create the `talyxel-sound` repo on GitHub and push this code to it. The repo must be public:
+   the installers and the updater download without logging in to GitHub.
 2. Bump `version` in `Cargo.toml`, commit, and push a tag: `git tag v0.2.0 && git push --tags`.
 3. `.github/workflows/release.yml` builds Windows, macOS and Linux binaries and attaches them to
-   the release. Running copies see the update on their next start.
+   the release. Running copies see the update on their next start. The same workflow also runs
+   (without publishing) on pull requests that change the build setup.
 
 [librespot]: https://github.com/librespot-org/librespot
