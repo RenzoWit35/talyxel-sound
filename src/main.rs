@@ -1,0 +1,177 @@
+mod app;
+mod auth;
+mod config;
+mod demo;
+mod event;
+mod media_keys;
+mod spotify;
+mod sync;
+mod ui;
+mod updater;
+mod visualizer;
+
+use std::sync::{Arc, atomic::AtomicBool};
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use tokio::sync::{Notify, mpsc};
+use tracing::{error, info};
+
+use crate::{
+    app::App,
+    config::Config,
+    spotify::{api::Api, player::LocalPlayer, sink::SampleTap},
+};
+
+#[derive(Parser)]
+#[command(
+    name = "talyxel",
+    version,
+    about = "Talyxel Sound — Spotify in your terminal"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+    /// Skip the update check for this run.
+    #[arg(long)]
+    no_update_check: bool,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Link (or re-link) your Spotify account in the browser.
+    Login,
+    /// Remove the stored Spotify credentials from the OS keyring.
+    Logout,
+    /// Check GitHub Releases for a newer version and install it.
+    Update,
+    /// Print where config and logs are stored.
+    Paths,
+    /// Preview the interface with mock data (no Spotify account needed).
+    Demo,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let _log_guard = init_logging();
+    let mut cfg = Config::load_or_create()?;
+    if cli.no_update_check {
+        cfg.check_updates = false;
+    }
+
+    match cli.command {
+        Some(Command::Login) => {
+            auth::login(&cfg).await?;
+            println!("Spotify account linked. Run `talyxel` to start.");
+            Ok(())
+        }
+        Some(Command::Logout) => {
+            if auth::logout()? {
+                println!("Stored Spotify credentials removed.");
+            } else {
+                println!("No stored credentials found.");
+            }
+            Ok(())
+        }
+        Some(Command::Update) => {
+            println!("Current version: v{}", updater::current_version());
+            let result =
+                tokio::task::spawn_blocking(move || updater::install(&cfg, true)).await??;
+            match result {
+                Some(v) => println!("Updated to v{v}."),
+                None => println!("Already up to date."),
+            }
+            Ok(())
+        }
+        Some(Command::Paths) => {
+            println!(
+                "config: {}",
+                config::config_dir()?.join("config.toml").display()
+            );
+            println!(
+                "logs:   {}",
+                config::data_dir()?.join("talyxel.log").display()
+            );
+            Ok(())
+        }
+        Some(Command::Demo) => {
+            let (tx, rx) = mpsc::unbounded_channel();
+            let mut app = demo::app(tx);
+            let mut terminal = ratatui::init();
+            let result = app::run(&mut terminal, &mut app, rx, None).await;
+            ratatui::restore();
+            result
+        }
+        None => run_tui(cfg).await,
+    }
+}
+
+async fn run_tui(cfg: Config) -> Result<()> {
+    let token = auth::obtain_token(&cfg).await?;
+
+    let api = Api::new(
+        auth::to_rspotify_token(&token),
+        auth::client_id(&cfg),
+        |refresh| auth::save_refresh_token(&refresh),
+    );
+
+    println!(
+        "Connecting to Spotify as Connect device \"{}\"…",
+        cfg.device_name
+    );
+    let tap = SampleTap::default();
+    let (local, player_events, local_error) =
+        match LocalPlayer::start(&cfg, &token.access_token, tap.clone()).await {
+            Ok((p, ev)) => (Some(p), Some(ev), None),
+            Err(e) => {
+                error!("local playback unavailable: {e:#}");
+                (
+                    None,
+                    None,
+                    Some(format!("Local playback unavailable: {e:#}")),
+                )
+            }
+        };
+
+    let (tx, rx) = mpsc::unbounded_channel();
+    let local_active = Arc::new(AtomicBool::new(false));
+    let poll_wake = Arc::new(Notify::new());
+
+    sync::spawn_remote_poller(
+        api.clone(),
+        &cfg,
+        local_active.clone(),
+        poll_wake.clone(),
+        tx.clone(),
+    );
+    sync::spawn_library_watcher(api.clone(), &cfg, tx.clone());
+    updater::spawn_check(cfg.clone(), tx.clone());
+    let media = media_keys::spawn(tx.clone());
+
+    let mut app = App::new(cfg, api, local, tap, local_active, poll_wake, tx, media);
+    if let Some(e) = local_error {
+        app.set_error(e);
+    }
+
+    let mut terminal = ratatui::init();
+    let result = app::run(&mut terminal, &mut app, rx, player_events).await;
+    ratatui::restore();
+    app.shutdown();
+    info!("exiting");
+    result
+}
+
+fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    let dir = config::data_dir().ok()?;
+    let appender = tracing_appender::rolling::never(dir, "talyxel.log");
+    let (writer, guard) = tracing_appender::non_blocking(appender);
+    let filter = tracing_subscriber::EnvFilter::try_from_env("TALYXEL_LOG")
+        .unwrap_or_else(|_| "info,librespot=info".into());
+    tracing_subscriber::fmt()
+        .with_writer(writer)
+        .with_ansi(false)
+        .with_env_filter(filter)
+        .init();
+    Some(guard)
+}
