@@ -12,6 +12,7 @@ use ratatui::{
 
 use crate::{
     app::{App, BROWSE, Focus, Overlay},
+    event::View,
     spotify::{Repeat, format_ms},
     updater,
 };
@@ -108,8 +109,15 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         items.push(ListItem::new(format!("  {name}")));
     }
     items.push(ListItem::new(""));
+    let playlists_header = if app.playlists_loaded {
+        format!("Playlists ({})", app.playlists.len())
+    } else if app.playlists_error.is_some() {
+        "Playlists (retrying…)".to_string()
+    } else {
+        "Playlists (loading…)".to_string()
+    };
     items.push(ListItem::new(Line::from(Span::styled(
-        format!("Playlists ({})", app.playlists.len()),
+        playlists_header,
         theme::heading(),
     ))));
     for p in &app.playlists {
@@ -319,6 +327,8 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect) {
         )
     } else if app.loading {
         format!("{} (loading…)", app.view.title())
+    } else if app.view_error.is_some() {
+        format!("{} (failed)", app.view.title())
     } else {
         format!("{} ({})", app.view.title(), app.tracks.len())
     };
@@ -338,6 +348,24 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect) {
         )),
         title_area,
     );
+
+    if let Some(error) = app.view_error.as_ref().filter(|_| app.tracks.is_empty()) {
+        let retry = match app.view {
+            View::Search(_) => "Press / to search again.",
+            _ => "Select it in the sidebar and press Enter to try again.",
+        };
+        let lines = vec![
+            Line::from(Span::styled(
+                format!("Couldn't load {}:", app.view.title()),
+                Style::new().fg(theme::ERROR),
+            )),
+            Line::from(Span::raw(error.clone())),
+            Line::default(),
+            Line::from(Span::styled(retry, theme::muted())),
+        ];
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), list_area);
+        return;
+    }
 
     let playing_uri = app.now.track.as_ref().map(|t| t.uri.as_str());
     let width = list_area.width as usize;
@@ -440,27 +468,99 @@ fn draw_search(f: &mut Frame, area: Rect, input: &str) {
 }
 
 fn draw_devices(f: &mut Frame, app: &mut App, area: Rect) {
-    let Overlay::Devices { devices, state } = &mut app.overlay else {
+    let this_device: Vec<bool> = match &app.overlay {
+        Overlay::Devices { devices, .. } => devices.iter().map(|d| app.is_this_device(d)).collect(),
+        _ => return,
+    };
+    let Overlay::Devices {
+        devices,
+        state,
+        loading,
+        error,
+    } = &mut app.overlay
+    else {
         return;
     };
-    let r = popup(area, 50, (devices.len() as u16 + 4).max(6));
+
+    // "▶ Name (this device)" on the left, "Kind  Vol%" on the right.
+    let rows: Vec<(String, String)> = devices
+        .iter()
+        .zip(&this_device)
+        .map(|(d, &this)| {
+            let marker = if d.is_active { "▶ " } else { "  " };
+            let suffix = if this { " (this device)" } else { "" };
+            let volume = d.volume.map(|v| format!("{v:>3}%")).unwrap_or_default();
+            let right = [d.kind.as_str(), volume.as_str()]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("  ");
+            (format!("{marker}{}{suffix}", d.name), right)
+        })
+        .collect();
+    let widest = rows
+        .iter()
+        .map(|(l, r)| l.chars().count() + r.chars().count() + 4)
+        .max()
+        .unwrap_or(0) as u16;
+    let width = (widest + 2).max(62).min(area.width);
+    let height = (devices.len().max(3) as u16) + 2;
+    let r = popup(area, width, height);
     f.render_widget(Clear, r);
-    let block = popup_block("Devices — Enter to transfer, r to refresh");
+    let title = if *loading && !devices.is_empty() {
+        "Spotify Connect devices (refreshing…)"
+    } else {
+        "Spotify Connect devices"
+    };
+    let block = popup_block(title).title_bottom(
+        Line::from(Span::styled(
+            " ↑/↓ choose · Enter play there · r refresh · Esc close ",
+            theme::muted(),
+        ))
+        .centered(),
+    );
+
     if devices.is_empty() {
+        let lines = match error {
+            Some(e) => vec![
+                Line::from(Span::styled(
+                    " Couldn't load devices:",
+                    Style::new().fg(theme::ERROR),
+                )),
+                Line::from(format!(" {e}")),
+                Line::from(Span::styled(" Press r to try again.", theme::muted())),
+            ],
+            None if *loading => vec![Line::from(Span::styled(
+                " Looking for devices…",
+                theme::muted(),
+            ))],
+            None => vec![
+                Line::from(" No devices found."),
+                Line::from(Span::styled(
+                    " Open Spotify on a phone, computer or speaker, then press r.",
+                    theme::muted(),
+                )),
+            ],
+        };
         f.render_widget(
-            Paragraph::new(Span::styled(" Looking for devices…", theme::muted()))
+            Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
                 .block(block),
             r,
         );
         return;
     }
-    let items: Vec<ListItem> = devices
-        .iter()
-        .map(|d| {
-            let active = if d.is_active { "▶ " } else { "  " };
-            let vol = d.volume.map(|v| format!("  {v}%")).unwrap_or_default();
-            ListItem::new(format!("{active}{}{vol}", d.name))
+
+    let inner_width = r.width.saturating_sub(2) as usize;
+    let items: Vec<ListItem> = rows
+        .into_iter()
+        .map(|(left, right)| {
+            let pad = inner_width.saturating_sub(left.chars().count() + right.chars().count() + 1);
+            ListItem::new(Line::from(vec![
+                Span::raw(left),
+                Span::raw(" ".repeat(pad)),
+                Span::styled(right, theme::muted()),
+            ]))
         })
         .collect();
     f.render_stateful_widget(
@@ -517,5 +617,86 @@ mod tests {
         ] {
             assert!(text.contains(needle), "missing {needle:?}");
         }
+    }
+    fn render(app: &mut crate::app::App) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(110, 34)).unwrap();
+        terminal.draw(|f| super::draw(f, app)).unwrap();
+        let buf = terminal.backend().buffer();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
+    }
+
+    fn demo() -> crate::app::App {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        crate::demo::app(tx)
+    }
+
+    fn devices_overlay(
+        devices: Vec<crate::spotify::Device>,
+        loading: bool,
+        error: Option<&str>,
+    ) -> crate::app::Overlay {
+        crate::app::Overlay::Devices {
+            devices,
+            state: ratatui::widgets::ListState::default().with_selected(Some(0)),
+            loading,
+            error: error.map(str::to_string),
+        }
+    }
+
+    #[tokio::test]
+    async fn device_list_marks_this_device_and_explains_the_keys() {
+        let mut app = demo();
+        app.device_id = Some("1".into());
+        app.overlay = devices_overlay(crate::demo::devices(), false, None);
+        let text = render(&mut app);
+        println!("{text}");
+        for needle in [
+            "Talyxel Sound (this device)",
+            "Living Room Speaker",
+            "Speaker",
+            "55%",
+            "Enter",
+            "r refresh",
+        ] {
+            assert!(text.contains(needle), "missing {needle:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn device_list_says_why_it_is_empty() {
+        let mut app = demo();
+        app.overlay = devices_overlay(Vec::new(), false, Some("no connection"));
+        let text = render(&mut app);
+        assert!(text.contains("no connection"), "{text}");
+        assert!(text.contains("r to try again"), "{text}");
+        assert!(!text.contains("Looking for devices"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn track_pane_explains_a_failed_load() {
+        let mut app = demo();
+        app.view = crate::event::View::Liked;
+        app.tracks.clear();
+        app.view_error = Some("Spotify did not answer in time".into());
+        let text = render(&mut app);
+        assert!(text.contains("Couldn't load Liked Songs"), "{text}");
+        assert!(text.contains("Spotify did not answer in time"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn sidebar_shows_the_playlist_loading_state() {
+        let mut app = demo();
+        app.playlists.clear();
+        app.playlists_loaded = false;
+        assert!(render(&mut app).contains("Playlists (loading…)"));
+        app.playlists_error = Some("offline".into());
+        assert!(render(&mut app).contains("Playlists (retrying…)"));
     }
 }

@@ -21,8 +21,12 @@ client, and it shows up in the device list on your phone and desktop.
 ## Features
 
 - **Spotify Connect device**: play locally, or control and transfer playback to any device (`d`).
-- **Live updates**: changes made on other devices (track, pause, seek, volume, shuffle/repeat)
-  appear within about a second. Playlist and Liked Songs edits are picked up automatically.
+- **Your library without a developer app**: playlists, Liked Songs, search, Recently Played and
+  the device list come through the same Spotify connection the official apps use, so they
+  aren't affected by the Web API limits described below.
+- **Live updates**: Spotify pushes changes made on other devices (track, pause, seek, volume,
+  shuffle/repeat) to the app as they happen. Playlist and Liked Songs edits are picked up
+  automatically.
 - **Spectrum visualizer**: a real FFT of the audio playing locally.
 - **Media keys** and the OS media overlay (Windows SMTC, macOS Now Playing, MPRIS on Linux).
 - **Secure login**: a one-time browser login. The refresh token is kept in the OS credential
@@ -31,8 +35,8 @@ client, and it shows up in the device list on your phone and desktop.
 
 ## Requirements
 
-- **Spotify Premium**. librespot streaming requires it. Without Premium the app still works as
-  a remote control for other devices.
+- **Spotify Premium**. librespot streaming requires it. Without Premium the app can still work
+  as a remote control for other devices, but only with your own `client_id` (see below).
 
 ## Install
 
@@ -71,6 +75,12 @@ cargo build --release
 ./target/release/talyxel
 ```
 
+`cargo test` runs the offline tests. To check the library, search and Spotify Connect against
+your own account (log in with `talyxel` first), run
+`cargo test live_ -- --ignored --nocapture --test-threads=1`. It plays a song on this computer
+for a few seconds. Set `TALYXEL_LIVE_TARGET` to the name of one of your devices to also test
+moving playback there and back.
+
 ## Usage
 
 | Command            | What it does                                        |
@@ -84,21 +94,21 @@ cargo build --release
 
 ## Keys
 
-| Key            | Action                           |
-|----------------|----------------------------------|
-| ↑/↓, j/k       | Move selection                   |
-| Tab, h/l       | Switch between sidebar and list  |
-| Enter          | Open item / play track           |
-| Space          | Play / pause                     |
-| n / p          | Next / previous track            |
-| ← / →          | Seek −5 s / +5 s                 |
-| + / −          | Volume                           |
-| s / r          | Shuffle / repeat (off→all→one)   |
-| /              | Search                           |
-| d              | Devices (transfer playback)      |
-| U              | Install available update         |
-| ?              | Help                             |
-| q, Ctrl-C      | Quit                             |
+| Key            | Action                                  |
+|----------------|-----------------------------------------|
+| ↑/↓, j/k       | Move selection                          |
+| Tab, h/l       | Switch between sidebar and list         |
+| Enter          | Open item / play track                  |
+| Space          | Play / pause                            |
+| n / p          | Next / previous track                   |
+| ← / →          | Seek −5 s / +5 s                        |
+| + / −          | Volume                                  |
+| s / r          | Shuffle / repeat (off→all→one)          |
+| /              | Search                                  |
+| d              | Devices: Enter plays there, r refreshes |
+| U              | Install available update                |
+| ?              | Help                                    |
+| q, Ctrl-C      | Quit                                    |
 
 ## Configuration
 
@@ -123,12 +133,17 @@ Logs are written to `talyxel.log` in the data directory. Set `TALYXEL_LOG=debug`
 
 ## Rate limits: using your own Spotify app
 
-Spotify limits Web API requests (search, playlists, the playback state of other devices) per
-*app*, not per user. Playback has to go through Spotify's desktop client, and without a
-`client_id` Talyxel Sound uses that client for the Web API too. Other librespot-based players
-share its limit, so it can run out. You'll then see `Spotify rate limit: try again in …`.
+Playback has to log in as Spotify's desktop client. Since December 2025 Spotify answers Web API
+requests made with that client's login with `429 Too Many Requests`, often asking for a wait of
+a whole day. Talyxel Sound therefore doesn't use the Web API while local playback is running:
+playlists, Liked Songs, search, Recently Played, the device list and remote control go through
+the playback connection instead, like in Spotify's own apps. With Premium you don't need to set
+anything up.
 
-Your own free developer app gets a limit of its own:
+When local playback isn't available (for example without Premium), the app falls back to the
+Web API. Spotify limits Web API requests per *app*, so the shared desktop client will mostly be
+refused and you'll see `Spotify rate limit: try again in …`. Your own free developer app gets a
+limit of its own:
 
 1. Open the [Spotify developer dashboard](https://developer.spotify.com/dashboard) and click
    **Create app**. Any name and description will do.
@@ -151,7 +166,10 @@ repo name and URLs in `install.sh`, `install.ps1` and the install commands above
 
 1. Create the `talyxel-sound` repo on GitHub and push this code to it. The repo must be public:
    the installers and the updater download without logging in to GitHub.
-2. Bump `version` in `Cargo.toml`, commit, and push a tag: `git tag v0.2.0 && git push --tags`.
+2. Bump `version` in `Cargo.toml`, commit, and push a tag for that exact version with a
+   lowercase `v`: `git tag v0.3.0 && git push --tags`. A release created on GitHub's website
+   needs the same tag. The build stops if the tag and `version` don't match, because the
+   updater would otherwise keep offering the same release.
 3. `.github/workflows/release.yml` builds Windows, macOS and Linux binaries and attaches them to
    the release. Running copies see the update on their next start. The same workflow also runs
    (without publishing) on pull requests that change the build setup.

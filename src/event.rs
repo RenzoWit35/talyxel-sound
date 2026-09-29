@@ -51,7 +51,15 @@ pub enum AppEvent {
         view: View,
         tracks: Vec<Track>,
     },
+    /// Loading a view failed; the track pane shows why.
+    TracksFailed {
+        view: View,
+        error: String,
+    },
     Devices(Vec<Device>),
+    DevicesFailed(String),
+    /// The playlists could not be loaded (the watcher keeps retrying).
+    PlaylistsFailed(String),
     Media(MediaCommand),
     UpdateAvailable(String),
     UpdateInstalled(String),

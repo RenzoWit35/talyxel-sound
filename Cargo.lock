@@ -5047,6 +5047,8 @@ dependencies = [
  "librespot-oauth",
  "librespot-playback",
  "librespot-protocol",
+ "protobuf",
+ "protobuf-json-mapping",
  "ratatui",
  "reqwest 0.12.28",
  "rspotify",

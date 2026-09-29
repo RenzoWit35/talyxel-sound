@@ -73,17 +73,30 @@ impl LocalPlayer {
         Ok((Self { spirc, session }, events))
     }
 
-    /// Plays a context (playlist/album/liked songs) or a list of tracks on this device.
-    pub fn load(&self, context_uri: Option<&str>, tracks: &[String], index: usize) -> Result<()> {
+    /// Plays a context (playlist, Liked Songs, search results) from `track_uri` on this device.
+    pub fn load_context(&self, context_uri: &str, track_uri: &str) -> Result<()> {
+        let options = LoadRequestOptions {
+            start_playing: true,
+            playing_track: Some(PlayingTrack::Uri(track_uri.to_string())),
+            ..LoadRequestOptions::default()
+        };
+        self.load(LoadRequest::from_context_uri(
+            context_uri.to_string(),
+            options,
+        ))
+    }
+
+    /// Plays a list of tracks on this device, starting at `index`.
+    pub fn load_tracks(&self, tracks: &[String], index: usize) -> Result<()> {
         let options = LoadRequestOptions {
             start_playing: true,
             playing_track: Some(PlayingTrack::Index(index as u32)),
             ..LoadRequestOptions::default()
         };
-        let request = match context_uri {
-            Some(uri) => LoadRequest::from_context_uri(uri.to_string(), options),
-            None => LoadRequest::from_tracks(tracks.to_vec(), options),
-        };
+        self.load(LoadRequest::from_tracks(tracks.to_vec(), options))
+    }
+
+    fn load(&self, request: LoadRequest) -> Result<()> {
         self.spirc.activate()?;
         self.spirc.load(request)?;
         Ok(())
