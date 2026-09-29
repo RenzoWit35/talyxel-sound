@@ -5031,7 +5031,7 @@ dependencies = [
 
 [[package]]
 name = "talyxel-sound"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5039,6 +5039,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "futures",
+ "http",
  "keyring",
  "librespot-connect",
  "librespot-core",
@@ -5047,12 +5048,14 @@ dependencies = [
  "librespot-playback",
  "librespot-protocol",
  "ratatui",
+ "reqwest 0.12.28",
  "rspotify",
  "rustfft",
  "rustls 0.23.45",
  "self_update",
  "semver",
  "serde",
+ "serde_json",
  "souvlaki",
  "tokio",
  "toml",

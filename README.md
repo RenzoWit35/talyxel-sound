@@ -114,12 +114,33 @@ library_refresh_secs = 60      # how often playlists are checked for changes
 check_updates = true
 update_repo_owner = "RenzoWit35"
 update_repo_name = "talyxel-sound"
-# Optional: use your own Spotify developer app (both required)
+# Optional: your own Spotify developer app for Web API requests (see "Rate limits" below)
 # client_id = "..."
-# redirect_uri = "http://127.0.0.1:8898/login"
+# redirect_uri = "http://127.0.0.1:8898/login"   # the default
 ```
 
 Logs are written to `talyxel.log` in the data directory. Set `TALYXEL_LOG=debug` for more detail.
+
+## Rate limits: using your own Spotify app
+
+Spotify limits Web API requests (search, playlists, the playback state of other devices) per
+*app*, not per user. Playback has to go through Spotify's desktop client, and without a
+`client_id` Talyxel Sound uses that client for the Web API too. Other librespot-based players
+share its limit, so it can run out. You'll then see `Spotify rate limit: try again in …`.
+
+Your own free developer app gets a limit of its own:
+
+1. Open the [Spotify developer dashboard](https://developer.spotify.com/dashboard) and click
+   **Create app**. Any name and description will do.
+2. Add the redirect URI `http://127.0.0.1:8898/login`, tick **Web API**, and save.
+3. Copy the app's **Client ID** and add it to `config.toml` (run `talyxel paths` to find it):
+   `client_id = "your-client-id"`.
+4. Start `talyxel`. The browser asks once to allow your app to use your account.
+
+Spotify's rules for these development-mode apps: they only work while the account that created
+the app has Premium, and they return at most 10 search results per request, so a search makes
+three requests to show 30 results. They also can't read the tracks of playlists you don't own or collaborate on, such as
+Discover Weekly, so Talyxel Sound loads those through the desktop client.
 
 ## Publishing updates
 

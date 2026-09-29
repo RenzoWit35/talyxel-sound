@@ -26,8 +26,11 @@ pub struct Config {
     pub check_updates: bool,
     pub update_repo_owner: String,
     pub update_repo_name: String,
-    /// Optional own Spotify developer app. Both must be set to take effect.
+    /// Client id of the user's own Spotify developer app. When set, Web API requests use it
+    /// instead of the desktop client, whose rate limit is shared with other players.
+    /// Playback always uses the desktop client.
     pub client_id: Option<String>,
+    /// Redirect URI registered for `client_id` (default: http://127.0.0.1:8898/login).
     pub redirect_uri: Option<String>,
 }
 
