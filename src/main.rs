@@ -53,6 +53,9 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Both rustls crypto backends end up enabled in the dependency tree, so rustls can't pick
+    // one on its own; librespot's HTTPS and websocket clients would panic without this.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
     let _log_guard = init_logging();
     let mut cfg = Config::load_or_create()?;
