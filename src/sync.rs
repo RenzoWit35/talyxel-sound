@@ -1,7 +1,9 @@
 //! Live update detection for changes made outside this app.
 //!
-//! * Playback on other devices: polls the Web API and only emits when something meaningful
-//!   changed (track, play state, device, shuffle/repeat/volume, or a position jump).
+//! * Playback on other devices: follows the Connect cluster updates Spotify pushes to the
+//!   Connect observer, re-reading the cluster now and then (or polling the Web API when there
+//!   is no playback session), and only emits when something meaningful changed (track, play state, device,
+//!   shuffle/repeat/volume, or a position jump).
 //! * Library: periodically compares playlist snapshot ids and the Liked Songs head/count.
 
 use std::{
@@ -13,20 +15,25 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Result;
+use futures::StreamExt;
 use tokio::sync::{Notify, mpsc::UnboundedSender};
 use tracing::warn;
 
 use crate::{
     config::Config,
     event::AppEvent,
-    spotify::{
-        PlaybackState, Playlist,
-        api::{Api, rate_limit_delay},
-    },
+    spotify::{PlaybackState, Playlist, api::Api, observer::ClusterUpdates},
 };
 
 /// Allowed drift between the interpolated and the reported position before we resync.
 const POSITION_TOLERANCE_MS: i64 = 1500;
+/// Retry delay while the playlists have never loaded.
+const FIRST_LOAD_RETRY: Duration = Duration::from_secs(10);
+/// Retry delay after a failed playback read while the session is still connecting.
+const RETRY_DELAY: Duration = Duration::from_secs(2);
+/// How often playback is re-read while Spotify pushes Connect changes anyway.
+const PUSHED_POLL: Duration = Duration::from_secs(60);
 
 pub fn spawn_remote_poller(
     api: Api,
@@ -34,16 +41,29 @@ pub fn spawn_remote_poller(
     local_active: Arc<AtomicBool>,
     wake: Arc<Notify>,
     tx: UnboundedSender<AppEvent>,
+    mut pushes: Option<ClusterUpdates>,
 ) {
     let active = Duration::from_millis(cfg.remote_poll_active_ms.max(250));
     let idle = Duration::from_millis(cfg.remote_poll_idle_ms.max(active.as_millis() as u64));
+    let pushed = pushes.is_some() && api.internal().is_some();
     tokio::spawn(async move {
         let mut last: Option<PlaybackState> = None;
         let mut last_at = Instant::now();
         let mut first = true;
+        let mut delay = Duration::ZERO;
         loop {
-            let mut delay = idle;
-            match api.playback().await {
+            let result: Result<Option<PlaybackState>> = tokio::select! {
+                _ = tokio::time::sleep(delay) => api.playback().await,
+                _ = wake.notified() => {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    api.playback().await
+                }
+                Some(update) = next_update(&mut pushes) => match api.internal() {
+                    Some(internal) => Ok(internal.playback_from_update(&update).await),
+                    None => continue,
+                },
+            };
+            match result {
                 Ok(state) => {
                     let elapsed = last_at.elapsed().as_millis() as i64;
                     if (first || significant_change(last.as_ref(), state.as_ref(), elapsed))
@@ -52,26 +72,56 @@ pub fn spawn_remote_poller(
                         return;
                     }
                     first = false;
-                    let remote_playing = state.as_ref().is_some_and(|s| s.is_playing);
-                    if remote_playing && !local_active.load(Ordering::Relaxed) {
-                        delay = active;
-                    }
+                    let local = local_active.load(Ordering::Relaxed);
+                    delay = poll_delay(pushed, state.as_ref(), local, active, idle);
                     last = state;
                     last_at = Instant::now();
                 }
-                // The API client already logged the 429 and holds back every request
-                // until Spotify's wait is over.
-                Err(e) => match rate_limit_delay(&e) {
-                    Some(wait) => delay = wait,
-                    None => warn!("playback poll failed: {e}"),
-                },
-            }
-            tokio::select! {
-                _ = tokio::time::sleep(delay) => {}
-                _ = wake.notified() => tokio::time::sleep(Duration::from_millis(300)).await,
+                Err(e) => {
+                    warn!("reading playback failed: {e:#}");
+                    // The Web API client holds back requests until Spotify's wait is over.
+                    delay = if pushed {
+                        RETRY_DELAY
+                    } else {
+                        idle.max(api.rate_limited_for())
+                    };
+                }
             }
         }
     });
+}
+
+/// The next cluster update Spotify pushed, skipping ones that can't be read. Never
+/// finishes when there is no playback session to receive them.
+async fn next_update(
+    pushes: &mut Option<ClusterUpdates>,
+) -> Option<librespot_protocol::connect::ClusterUpdate> {
+    let Some(stream) = pushes else {
+        return std::future::pending().await;
+    };
+    loop {
+        match stream.next().await? {
+            Ok(update) => return Some(update),
+            Err(e) => warn!("unreadable Connect update: {e}"),
+        }
+    }
+}
+
+/// Wait before the next playback poll.
+fn poll_delay(
+    pushed: bool,
+    state: Option<&PlaybackState>,
+    local_active: bool,
+    active: Duration,
+    idle: Duration,
+) -> Duration {
+    if pushed {
+        PUSHED_POLL
+    } else if state.is_some_and(|s| s.is_playing) && !local_active {
+        active
+    } else {
+        idle
+    }
 }
 
 /// True if `next` differs from `prev` in a way the UI can't predict on its own.
@@ -133,7 +183,7 @@ pub fn spawn_library_watcher(api: Api, cfg: &Config, tx: UnboundedSender<AppEven
                 Err(e) => {
                     warn!("playlist refresh failed: {e:#}");
                     if known.is_none() {
-                        let _ = tx.send(AppEvent::Error(format!("Could not load playlists: {e}")));
+                        let _ = tx.send(AppEvent::PlaylistsFailed(format!("{e:#}")));
                     }
                 }
             }
@@ -145,7 +195,13 @@ pub fn spawn_library_watcher(api: Api, cfg: &Config, tx: UnboundedSender<AppEven
                 liked = Some(head);
             }
 
-            tokio::time::sleep(every).await;
+            // Until the playlists have loaded once, try again soon.
+            let wait = if known.is_some() {
+                every
+            } else {
+                every.min(FIRST_LOAD_RETRY)
+            };
+            tokio::time::sleep(wait).await;
         }
     });
 }
@@ -200,6 +256,27 @@ mod tests {
             progress_ms: pos,
             ..PlaybackState::default()
         }
+    }
+
+    #[test]
+    fn polls_slowly_when_spotify_pushes_changes() {
+        let (active, idle) = (Duration::from_secs(1), Duration::from_secs(5));
+        let playing_elsewhere = Some(state("t1", true, 0));
+        // Web API only: poll fast while another device plays.
+        assert_eq!(
+            poll_delay(false, playing_elsewhere.as_ref(), false, active, idle),
+            active
+        );
+        assert_eq!(poll_delay(false, None, false, active, idle), idle);
+        assert_eq!(
+            poll_delay(false, playing_elsewhere.as_ref(), true, active, idle),
+            idle
+        );
+        // With Connect pushes, polling is only a safety net.
+        assert_eq!(
+            poll_delay(true, playing_elsewhere.as_ref(), false, active, idle),
+            PUSHED_POLL
+        );
     }
 
     #[test]

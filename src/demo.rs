@@ -29,18 +29,21 @@ pub fn devices() -> Vec<Device> {
             name: "Talyxel Sound".into(),
             is_active: true,
             volume: Some(75),
+            kind: "Computer".into(),
         },
         Device {
             id: Some("2".into()),
             name: "Phone".into(),
             is_active: false,
             volume: Some(40),
+            kind: "Phone".into(),
         },
         Device {
             id: Some("3".into()),
             name: "Living Room Speaker".into(),
             is_active: false,
             volume: Some(55),
+            kind: "Speaker".into(),
         },
     ]
 }
@@ -116,6 +119,7 @@ pub fn app(tx: mpsc::UnboundedSender<AppEvent>) -> App {
         name: "Discover Weekly".into(),
     };
     app.track_state.select(Some(1));
+    app.playlists_loaded = true;
     app.sidebar.select(Some(5));
     app.focus = Focus::Tracks;
     app.now.track = Some(app.tracks[1].clone());
@@ -124,6 +128,6 @@ pub fn app(tx: mpsc::UnboundedSender<AppEvent>) -> App {
     app.now.position_at = Some(std::time::Instant::now());
     app.now.device_name = Some("Talyxel Sound".into());
     app.now.volume = 75;
-    app.update_available = Some("0.2.0".into());
+    app.update_available = Some("0.4.0".into());
     app
 }

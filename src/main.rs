@@ -20,7 +20,7 @@ use tracing::{error, info};
 use crate::{
     app::App,
     config::Config,
-    spotify::{api::Api, player::LocalPlayer, sink::SampleTap},
+    spotify::{api::Api, internal::Internal, observer, player::LocalPlayer, sink::SampleTap},
 };
 
 #[derive(Parser)]
@@ -149,6 +149,20 @@ async fn run_tui(cfg: Config) -> Result<()> {
                 )
             }
         };
+    // The Web API refuses the desktop client, so the library, search and Connect go through
+    // the playback session whenever there is one.
+    let mut cluster_updates = None;
+    if let Some(p) = &local {
+        let mut internal = Internal::new(p.session.clone());
+        match observer::start(&token.access_token).await {
+            Ok((session, updates)) => {
+                internal = internal.with_observer(session);
+                cluster_updates = Some(updates);
+            }
+            Err(e) => error!("Spotify Connect observer unavailable: {e:#}"),
+        }
+        api = api.with_internal(internal);
+    }
 
     let (tx, rx) = mpsc::unbounded_channel();
     let local_active = Arc::new(AtomicBool::new(false));
@@ -160,6 +174,7 @@ async fn run_tui(cfg: Config) -> Result<()> {
         local_active.clone(),
         poll_wake.clone(),
         tx.clone(),
+        cluster_updates,
     );
     sync::spawn_library_watcher(api.clone(), &cfg, tx.clone());
     updater::spawn_check(cfg.clone(), tx.clone());
@@ -183,7 +198,8 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let appender = tracing_appender::rolling::never(dir, "talyxel.log");
     let (writer, guard) = tracing_appender::non_blocking(appender);
     let filter = tracing_subscriber::EnvFilter::try_from_env("TALYXEL_LOG")
-        .unwrap_or_else(|_| "info,librespot=info".into());
+        // rspotify logs every request at info level, access token included.
+        .unwrap_or_else(|_| "info,librespot=info,rspotify_http=warn".into());
     tracing_subscriber::fmt()
         .with_writer(writer)
         .with_ansi(false)

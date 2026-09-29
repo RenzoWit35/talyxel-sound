@@ -22,7 +22,7 @@ use rspotify::{
 use serde::Deserialize;
 use tracing::warn;
 
-use super::{Device, PlaybackState, Playlist, Repeat, Track};
+use super::{Device, PlaybackState, Playlist, Repeat, Track, internal::Internal};
 
 const PAGE: u32 = 50;
 /// Upper bound on tracks loaded for one view, to keep huge playlists responsive.
@@ -159,6 +159,9 @@ pub struct Api {
     /// Spotify's desktop client while `web` is the user's own app, for playlists that
     /// development-mode apps are not allowed to read.
     desktop: Option<Client>,
+    /// Spotify's own endpoints through the playback session, once it is connected. They
+    /// replace the Web API, which refuses the desktop client (see [`Internal`]).
+    internal: Option<Internal>,
 }
 
 impl Api {
@@ -172,6 +175,7 @@ impl Api {
         Self {
             web: Client::new(token, client_id, true, on_refresh),
             desktop: None,
+            internal: None,
         }
     }
 
@@ -186,7 +190,21 @@ impl Api {
         Self {
             web: Client::new(token, client_id, false, on_refresh),
             desktop: Some(self.web),
+            internal: self.internal,
         }
+    }
+
+    /// Serves the library, search and Spotify Connect through the librespot session
+    /// instead of the Web API.
+    pub fn with_internal(self, internal: Internal) -> Self {
+        Self {
+            internal: Some(internal),
+            ..self
+        }
+    }
+
+    pub fn internal(&self) -> Option<&Internal> {
+        self.internal.as_ref()
     }
 
     /// How long Spotify asked the Web API client to wait before its next request.
@@ -195,12 +213,18 @@ impl Api {
     }
 
     pub async fn username(&self) -> Result<String> {
+        if let Some(i) = &self.internal {
+            return i.display_name().await;
+        }
         let c = &self.web;
         let me = c.run(|| c.spotify.me()).await?;
         Ok(me.display_name.unwrap_or_else(|| me.id.id().to_string()))
     }
 
     pub async fn playlists(&self) -> Result<Vec<Playlist>> {
+        if let Some(i) = &self.internal {
+            return i.playlists().await;
+        }
         let c = &self.web;
         let mut out = Vec::new();
         let mut offset = 0;
@@ -220,6 +244,9 @@ impl Api {
     }
 
     pub async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
+        if let Some(i) = &self.internal {
+            return i.playlist_tracks(playlist_id).await;
+        }
         let id = PlaylistId::from_id(playlist_id)?;
         let result = fetch_playlist_tracks(&self.web, &id).await;
         let usable = result.as_ref().is_ok_and(|tracks| !tracks.is_empty());
@@ -232,6 +259,9 @@ impl Api {
     }
 
     pub async fn liked_tracks(&self) -> Result<Vec<Track>> {
+        if let Some(i) = &self.internal {
+            return i.liked_tracks().await;
+        }
         let c = &self.web;
         let mut out = Vec::new();
         let mut offset = 0;
@@ -253,6 +283,9 @@ impl Api {
     }
 
     pub async fn liked_total(&self) -> Result<(u32, Option<String>)> {
+        if let Some(i) = &self.internal {
+            return i.liked_head().await;
+        }
         let c = &self.web;
         let page = c
             .run(|| {
@@ -270,6 +303,9 @@ impl Api {
     }
 
     pub async fn recently_played(&self) -> Result<Vec<Track>> {
+        if let Some(i) = &self.internal {
+            return i.recently_played().await;
+        }
         let c = &self.web;
         let page = c
             .run(|| c.spotify.current_user_recently_played(Some(50), None))
@@ -282,6 +318,9 @@ impl Api {
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<Track>> {
+        if let Some(i) = &self.internal {
+            return i.search(query).await;
+        }
         let c = &self.web;
         let (limit, pages) = if self.desktop.is_some() {
             (OWN_APP_SEARCH_PAGE, OWN_APP_SEARCH_PAGES)
@@ -316,6 +355,9 @@ impl Api {
     }
 
     pub async fn devices(&self) -> Result<Vec<Device>> {
+        if let Some(i) = &self.internal {
+            return i.devices().await;
+        }
         let c = &self.web;
         Ok(c.run(|| c.spotify.device())
             .await?
@@ -324,10 +366,13 @@ impl Api {
             .collect())
     }
 
-    pub async fn playback(&self) -> std::result::Result<Option<PlaybackState>, ClientError> {
+    pub async fn playback(&self) -> Result<Option<PlaybackState>> {
+        if let Some(i) = &self.internal {
+            return i.playback().await;
+        }
         let c = &self.web;
         let ctx = c
-            .call(|| {
+            .run(|| {
                 c.spotify.current_playback(
                     None,
                     Some(&[AdditionalType::Track, AdditionalType::Episode]),
@@ -351,41 +396,69 @@ impl Api {
 
     // ---- Remote control (used when another device is playing) ----
 
-    pub async fn transfer(&self, device_id: &str, play: bool) -> Result<()> {
+    /// Moves playback to `device_id` and keeps it playing from `position_ms`.
+    pub async fn transfer(&self, device_id: &str, position_ms: Option<u32>) -> Result<()> {
+        if let Some(i) = &self.internal {
+            return i.transfer(device_id, position_ms).await;
+        }
         let c = &self.web;
-        c.run(|| c.spotify.transfer_playback(device_id, Some(play)))
+        c.run(|| c.spotify.transfer_playback(device_id, Some(true)))
             .await
     }
     pub async fn pause(&self) -> Result<()> {
+        if let Some(i) = &self.internal {
+            return i.pause().await;
+        }
         let c = &self.web;
         c.run(|| c.spotify.pause_playback(None)).await
     }
     pub async fn resume(&self) -> Result<()> {
+        if let Some(i) = &self.internal {
+            return i.resume().await;
+        }
         let c = &self.web;
         c.run(|| c.spotify.resume_playback(None, None)).await
     }
     pub async fn next(&self) -> Result<()> {
+        if let Some(i) = &self.internal {
+            return i.next().await;
+        }
         let c = &self.web;
         c.run(|| c.spotify.next_track(None)).await
     }
     pub async fn prev(&self) -> Result<()> {
+        if let Some(i) = &self.internal {
+            return i.prev().await;
+        }
         let c = &self.web;
         c.run(|| c.spotify.previous_track(None)).await
     }
     pub async fn seek(&self, position_ms: u32) -> Result<()> {
+        if let Some(i) = &self.internal {
+            return i.seek(position_ms).await;
+        }
         let c = &self.web;
         let pos = chrono::TimeDelta::milliseconds(position_ms as i64);
         c.run(|| c.spotify.seek_track(pos, None)).await
     }
     pub async fn volume(&self, percent: u8) -> Result<()> {
+        if let Some(i) = &self.internal {
+            return i.volume(percent).await;
+        }
         let c = &self.web;
         c.run(|| c.spotify.volume(percent.min(100), None)).await
     }
     pub async fn shuffle(&self, on: bool) -> Result<()> {
+        if let Some(i) = &self.internal {
+            return i.shuffle(on).await;
+        }
         let c = &self.web;
         c.run(|| c.spotify.shuffle(on, None)).await
     }
     pub async fn repeat(&self, repeat: Repeat) -> Result<()> {
+        if let Some(i) = &self.internal {
+            return i.repeat(repeat).await;
+        }
         let c = &self.web;
         let state = match repeat {
             Repeat::Off => RepeatState::Off,
@@ -492,6 +565,7 @@ fn convert_device(d: rspotify::model::Device) -> Device {
         name: d.name,
         is_active: d.is_active,
         volume: d.volume_percent.map(|v| v.min(100) as u8),
+        kind: String::new(),
     }
 }
 

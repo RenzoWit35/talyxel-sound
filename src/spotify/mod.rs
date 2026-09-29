@@ -1,4 +1,6 @@
 pub mod api;
+pub mod internal;
+pub mod observer;
 pub mod player;
 pub mod sink;
 
@@ -28,6 +30,8 @@ pub struct Device {
     pub name: String,
     pub is_active: bool,
     pub volume: Option<u8>,
+    /// What kind of device it is ("Computer", "Phone", "Speaker", …); may be empty.
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
