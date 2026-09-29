@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some(Command::Logout) => {
-            if auth::logout()? {
+            if auth::logout(&cfg)? {
                 println!("Stored Spotify credentials removed.");
             } else {
                 println!("No stored credentials found.");
@@ -111,13 +111,26 @@ async fn main() -> Result<()> {
 }
 
 async fn run_tui(cfg: Config) -> Result<()> {
-    let token = auth::obtain_token(&cfg).await?;
+    let token = auth::obtain_token().await?;
 
-    let api = Api::new(
+    let mut api = Api::new(
         auth::to_rspotify_token(&token),
-        auth::client_id(&cfg),
+        auth::DESKTOP_CLIENT_ID,
         |refresh| auth::save_refresh_token(&refresh),
     );
+    match auth::obtain_own_app_token(&cfg).await {
+        Ok(Some((own, client_id))) => {
+            let id = client_id.clone();
+            api = api.with_own_app(auth::to_rspotify_token(&own), &client_id, move |refresh| {
+                auth::save_own_app_refresh_token(&id, &refresh)
+            });
+        }
+        Ok(None) => {}
+        Err(e) => {
+            error!("could not use the configured client_id: {e:#}");
+            println!("Could not use your own Spotify app ({e:#}); using the shared client.");
+        }
+    }
 
     println!(
         "Connecting to Spotify as Connect device \"{}\"…",

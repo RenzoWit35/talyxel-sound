@@ -310,7 +310,14 @@ fn render_spectrum(buf: &mut Buffer, area: Rect, bars: &[f32]) {
 
 fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Tracks && matches!(app.overlay, Overlay::None);
-    let title = if app.loading {
+    let rate_limited = app.api.rate_limited_for();
+    let title = if app.loading && !rate_limited.is_zero() {
+        format!(
+            "{} (Spotify rate limit, retrying in {}s…)",
+            app.view.title(),
+            rate_limited.as_secs() + 1
+        )
+    } else if app.loading {
         format!("{} (loading…)", app.view.title())
     } else {
         format!("{} ({})", app.view.title(), app.tracks.len())

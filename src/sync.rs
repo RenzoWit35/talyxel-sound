@@ -59,14 +59,12 @@ pub fn spawn_remote_poller(
                     last = state;
                     last_at = Instant::now();
                 }
-                Err(e) => {
-                    if let Some(wait) = rate_limit_delay(&e) {
-                        warn!("rate limited by Spotify, backing off {wait:?}");
-                        delay = wait;
-                    } else {
-                        warn!("playback poll failed: {e}");
-                    }
-                }
+                // The API client already logged the 429 and holds back every request
+                // until Spotify's wait is over.
+                Err(e) => match rate_limit_delay(&e) {
+                    Some(wait) => delay = wait,
+                    None => warn!("playback poll failed: {e}"),
+                },
             }
             tokio::select! {
                 _ = tokio::time::sleep(delay) => {}
