@@ -25,7 +25,8 @@ use crate::{
         Device, PlaybackState, Playlist, Repeat, Track, api::Api, internal::search_uri,
         player::LocalPlayer, sink::SampleTap,
     },
-    ui, updater,
+    ui::{self, theme::Theme},
+    updater,
     visualizer::Spectrum,
 };
 
@@ -127,6 +128,10 @@ impl NowPlaying {
 pub struct App {
     pub cfg: Config,
     pub api: Api,
+    /// Colors of the interface, from `cfg.theme` and `cfg.colors`.
+    pub theme: Theme,
+    /// Where the chosen theme is saved; `None` in the demo.
+    pub config_path: Option<std::path::PathBuf>,
     pub local: Option<LocalPlayer>,
     /// Spotify Connect id of this app's device, when local playback is available.
     pub device_id: Option<String>,
@@ -181,7 +186,10 @@ impl App {
         sidebar.select(Some(1));
         let volume = cfg.initial_volume;
         let device_id = local.as_ref().map(|l| l.session.device_id().to_string());
+        let (theme, _) = Theme::from_config(&cfg.theme, &cfg.colors);
         Self {
+            theme,
+            config_path: None,
             cfg,
             api,
             local,
@@ -452,6 +460,10 @@ impl App {
             AppEvent::Status(s) => {
                 if let Some(name) = s.strip_prefix("Logged in as ") {
                     self.username = Some(name.to_string());
+                    // A startup warning (bad config color, no local playback) matters more.
+                    if self.visible_status().is_some_and(|(_, error)| error) {
+                        return;
+                    }
                 }
                 self.set_status(s);
             }
@@ -920,6 +932,7 @@ impl App {
             KeyCode::Char('-') | KeyCode::Char('_') => self.change_volume(-(VOLUME_STEP as i16)),
             KeyCode::Char('s') => self.toggle_shuffle(),
             KeyCode::Char('r') => self.cycle_repeat(),
+            KeyCode::Char('t') => self.next_theme(),
             KeyCode::Char('U') => {
                 if self.updating {
                     return;
@@ -939,6 +952,20 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Switches to the next built-in theme and remembers it in config.toml.
+    fn next_theme(&mut self) {
+        let name = crate::ui::theme::next_preset(&self.cfg.theme);
+        self.cfg.theme = name.to_string();
+        self.theme = Theme::from_config(name, &self.cfg.colors).0;
+        if let Some(path) = &self.config_path
+            && let Err(e) = crate::config::save_theme(path, name)
+        {
+            self.set_error(format!("Theme: {name} (not saved: {e:#})"));
+            return;
+        }
+        self.set_status(format!("Theme: {name}"));
     }
 
     fn move_selection(&mut self, delta: i32) {
@@ -1139,6 +1166,54 @@ mod tests {
         assert!(app.now.is_playing);
         assert_eq!(app.now.device_name.as_deref(), Some("Tv"));
         assert!(app.now.position() < 20_000);
+    }
+
+    fn press(app: &mut App, c: char) {
+        app.on_input(Event::Key(KeyEvent::new(
+            KeyCode::Char(c),
+            KeyModifiers::NONE,
+        )));
+    }
+
+    #[tokio::test]
+    async fn t_switches_to_the_next_theme_and_keeps_custom_colors() {
+        let mut app = app();
+        app.cfg.colors.border = Some("#123456".into());
+        press(&mut app, 't');
+        assert_eq!(app.cfg.theme, "blue");
+        let blue = crate::ui::theme::Theme::preset("blue").unwrap();
+        assert_eq!(app.theme.accent, blue.accent);
+        assert_eq!(
+            app.theme.border,
+            ratatui::style::Color::Rgb(0x12, 0x34, 0x56)
+        );
+        assert_eq!(app.visible_status(), Some(("Theme: blue", false)));
+    }
+
+    #[tokio::test]
+    async fn the_login_greeting_does_not_hide_a_startup_warning() {
+        let mut app = app();
+        app.set_error("Unknown color \"sparkly\" for accent in config.toml");
+        app.on_app_event(AppEvent::Status("Logged in as Renwox24".into()));
+        assert_eq!(app.username.as_deref(), Some("Renwox24"));
+        assert_eq!(
+            app.visible_status(),
+            Some(("Unknown color \"sparkly\" for accent in config.toml", true))
+        );
+    }
+
+    #[tokio::test]
+    async fn the_chosen_theme_is_saved_to_the_config_file() {
+        let path = std::env::temp_dir().join(format!("talyxel-test-{}.toml", uuid::Uuid::new_v4()));
+        std::fs::write(&path, "bitrate = 96\n").unwrap();
+        let mut app = app();
+        app.config_path = Some(path.clone());
+        press(&mut app, 't');
+        press(&mut app, 't');
+        let saved = crate::config::Config::parse(&std::fs::read_to_string(&path).unwrap());
+        let _ = std::fs::remove_file(&path);
+        let saved = saved.unwrap();
+        assert_eq!((saved.theme.as_str(), saved.bitrate), ("purple", 96));
     }
 
     #[tokio::test]

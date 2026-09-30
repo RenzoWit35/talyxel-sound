@@ -101,6 +101,10 @@ async fn main() -> Result<()> {
         Some(Command::Demo) => {
             let (tx, rx) = mpsc::unbounded_channel();
             let mut app = demo::app(tx);
+            // Preview the configured colors; `t` still switches themes, without saving.
+            app.theme = ui::theme::Theme::from_config(&cfg.theme, &cfg.colors).0;
+            app.cfg.theme = cfg.theme.clone();
+            app.cfg.colors = cfg.colors.clone();
             let mut terminal = ratatui::init();
             let result = app::run(&mut terminal, &mut app, rx, None).await;
             ratatui::restore();
@@ -180,7 +184,12 @@ async fn run_tui(cfg: Config) -> Result<()> {
     updater::spawn_check(cfg.clone(), tx.clone());
     let media = media_keys::spawn(tx.clone());
 
+    let (_, theme_warnings) = ui::theme::Theme::from_config(&cfg.theme, &cfg.colors);
     let mut app = App::new(cfg, api, local, tap, local_active, poll_wake, tx, media);
+    app.config_path = config::config_path().ok();
+    if let Some(w) = theme_warnings.first() {
+        app.set_error(w.clone());
+    }
     if let Some(e) = local_error {
         app.set_error(e);
     }

@@ -1,5 +1,5 @@
 mod logo;
-mod theme;
+pub mod theme;
 
 use ratatui::{
     Frame,
@@ -10,6 +10,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
+use self::theme::Theme;
 use crate::{
     app::{App, BROWSE, Focus, Overlay},
     event::View,
@@ -17,9 +18,13 @@ use crate::{
     updater,
 };
 
+/// Narrowest the right side (now playing and tracks) gets when the sidebar shows the logo.
+const MIN_RIGHT_WIDTH: u16 = 56;
+
 pub fn draw(f: &mut Frame, app: &mut App) {
+    let th = app.theme;
     let area = f.area();
-    f.render_widget(Block::new().style(theme::base()), area);
+    f.render_widget(Block::new().style(th.base()), area);
 
     let mut title_right = Line::default();
     if let Some(v) = &app.update_available {
@@ -28,15 +33,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         } else {
             format!(" ⬆ v{v} available — press U ")
         };
-        title_right = Line::from(Span::styled(text, Style::new().fg(theme::BADGE))).right_aligned();
+        title_right = Line::from(Span::styled(text, th.badge())).right_aligned();
     }
     let outer = Block::bordered()
         .border_type(BorderType::Plain)
-        .border_style(theme::border(false))
+        .border_style(th.border(false))
         .title(
             Line::from(Span::styled(
                 format!(" Talyxel Sound - TUI v{} ", updater::current_version()),
-                theme::heading(),
+                th.heading(),
             ))
             .centered(),
         )
@@ -45,7 +50,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     f.render_widget(outer, area);
 
     let [main, status] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner);
-    let side_w = (main.width * 3 / 10).clamp(28, 40);
+    // The sidebar grows to fit the logo when that still leaves room for the track list.
+    let side_w = if main.width >= logo::WIDTH + 4 + MIN_RIGHT_WIDTH {
+        logo::WIDTH + 4
+    } else {
+        (main.width * 3 / 10).clamp(28, 40)
+    };
     let [left, right] =
         Layout::horizontal([Constraint::Length(side_w), Constraint::Min(0)]).areas(main);
 
@@ -65,17 +75,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     match &app.overlay {
         Overlay::None => {}
-        Overlay::Help => draw_help(f, area),
-        Overlay::Search { input } => draw_search(f, area, input),
+        Overlay::Help => draw_help(f, &th, area),
+        Overlay::Search { input } => draw_search(f, &th, area, input),
         Overlay::Devices { .. } => draw_devices(f, app, area),
     }
 }
 
 fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
+    let th = app.theme;
     let focused = app.focus == Focus::Sidebar && matches!(app.overlay, Overlay::None);
     let block = Block::new()
         .borders(Borders::RIGHT)
-        .border_style(theme::border(false));
+        .border_style(th.border(false));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -89,9 +100,9 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     if show_logo {
         let mut lines: Vec<Line> = logo::LOGO
             .iter()
-            .map(|l| Line::from(Span::styled(*l, theme::accent())))
+            .map(|l| Line::from(Span::styled(*l, th.accent())))
             .collect();
-        lines.push(Line::from(Span::styled(logo::WORDMARK, theme::heading())));
+        lines.push(Line::from(Span::styled(logo::WORDMARK, th.heading())));
         f.render_widget(
             Paragraph::new(lines).alignment(Alignment::Center),
             logo_area,
@@ -103,7 +114,7 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     // Section headers are rendered as separate, non-selectable rows; map selection accordingly.
     items.push(ListItem::new(Line::from(Span::styled(
         "Browse",
-        theme::heading(),
+        th.heading(),
     ))));
     for name in BROWSE {
         items.push(ListItem::new(format!("  {name}")));
@@ -118,7 +129,7 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     };
     items.push(ListItem::new(Line::from(Span::styled(
         playlists_header,
-        theme::heading(),
+        th.heading(),
     ))));
     for p in &app.playlists {
         items.push(ListItem::new(format!("  {}", p.name)));
@@ -129,8 +140,8 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     let mut state = ratatui::widgets::ListState::default().with_offset(0);
     state.select(row);
     let list = List::new(items)
-        .highlight_style(theme::selected(focused))
-        .style(theme::base());
+        .highlight_style(th.selected(focused))
+        .style(th.base());
     f.render_stateful_widget(
         list,
         list_area.inner(ratatui::layout::Margin::new(1, 0)),
@@ -139,35 +150,36 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
+    let th = app.theme;
     let block = Block::new()
         .borders(Borders::BOTTOM)
-        .border_style(theme::border(false));
+        .border_style(th.border(false));
     let inner = block.inner(area).inner(ratatui::layout::Margin::new(2, 0));
     f.render_widget(block, area);
 
     let now = &app.now;
-    let mut lines = vec![Line::from(Span::styled("Now Playing", theme::heading()))];
+    let mut lines = vec![Line::from(Span::styled("Now Playing", th.heading()))];
     match &now.track {
         Some(t) => {
             lines.push(Line::from(vec![
                 Span::styled(
                     t.artists.clone(),
-                    Style::new().fg(theme::FG).add_modifier(Modifier::BOLD),
+                    Style::new().fg(th.text).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" - "),
-                Span::styled(t.name.clone(), Style::new().fg(theme::FG)),
+                Span::styled(t.name.clone(), Style::new().fg(th.text)),
             ]));
             let album = match &t.year {
                 Some(y) if !y.is_empty() => format!("{} ({y})", t.album),
                 _ => t.album.clone(),
             };
-            lines.push(Line::from(Span::styled(album, theme::muted())));
+            lines.push(Line::from(Span::styled(album, th.muted())));
         }
         None => {
-            lines.push(Line::from(Span::styled("Nothing playing", theme::muted())));
+            lines.push(Line::from(Span::styled("Nothing playing", th.muted())));
             lines.push(Line::from(Span::styled(
                 "Select a track and press Enter, or press d to pick a device",
-                theme::muted(),
+                th.muted(),
             )));
         }
     }
@@ -194,15 +206,16 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
     f.render_widget(Paragraph::new(Span::raw(queue_pos)), left);
     f.render_widget(
-        Paragraph::new(Span::styled(device, theme::accent())).right_aligned(),
+        Paragraph::new(Span::styled(device, th.accent())).right_aligned(),
         right,
     );
 }
 
 fn draw_player(f: &mut Frame, app: &mut App, area: Rect) {
+    let th = app.theme;
     let block = Block::new()
         .borders(Borders::BOTTOM)
-        .border_style(theme::border(false));
+        .border_style(th.border(false));
     let inner = block.inner(area).inner(ratatui::layout::Margin::new(2, 0));
     f.render_widget(block, area);
 
@@ -215,7 +228,7 @@ fn draw_player(f: &mut Frame, app: &mut App, area: Rect) {
 
     let n_bars = (bars_area.width as usize).div_ceil(2);
     app.spectrum_width = n_bars;
-    render_spectrum(f.buffer_mut(), bars_area, &app.spectrum.bars);
+    render_spectrum(f.buffer_mut(), &th, bars_area, &app.spectrum.bars);
 
     // Progress bar: [>=======--------] 2:54 / 5:59
     let now = &app.now;
@@ -231,14 +244,14 @@ fn draw_player(f: &mut Frame, app: &mut App, area: Rect) {
         0
     };
     let progress = Line::from(vec![
-        Span::styled("[", theme::accent()),
-        Span::styled(">", theme::heading()),
-        Span::styled("=".repeat(filled.min(bar_w)), theme::accent()),
+        Span::styled("[", th.accent()),
+        Span::styled(">", th.heading()),
+        Span::styled("=".repeat(filled.min(bar_w)), th.accent()),
         Span::styled(
             "-".repeat(bar_w - filled.min(bar_w)),
-            Style::new().fg(theme::GREEN_DIM),
+            Style::new().fg(th.dim),
         ),
-        Span::styled("]", theme::accent()),
+        Span::styled("]", th.accent()),
         Span::raw(times),
     ]);
     f.render_widget(Paragraph::new(progress), progress_area);
@@ -254,35 +267,41 @@ fn draw_player(f: &mut Frame, app: &mut App, area: Rect) {
         Repeat::Context => "all",
         Repeat::Track => "one",
     };
-    let left = Line::from(vec![
-        Span::styled(state, theme::heading()),
-        Span::raw("   "),
-        Span::styled("[<<]", theme::accent()),
-        Span::raw("  "),
-        Span::styled(
-            if now.is_playing { "[||]" } else { "[> ]" },
-            theme::accent(),
-        ),
-        Span::raw("  "),
-        Span::styled("[>>]", theme::accent()),
-        Span::raw("   "),
-        Span::styled(
-            format!("shuffle:{shuffle}  repeat:{repeat}"),
-            theme::muted(),
-        ),
-    ]);
     let vol = format!("[Vol : {}%]", now.volume);
     let [l, r] = Layout::horizontal([Constraint::Min(0), Constraint::Length(vol.len() as u16)])
         .areas(controls_area);
+    // Roomy spacing when it fits next to the volume, tighter and shorter when it doesn't.
+    let controls = |gap: &'static str, modes: String| {
+        Line::from(vec![
+            Span::styled(state, th.heading()),
+            Span::raw(gap),
+            Span::styled("[<<]", th.accent()),
+            Span::raw(gap),
+            Span::styled(if now.is_playing { "[||]" } else { "[> ]" }, th.accent()),
+            Span::raw(gap),
+            Span::styled("[>>]", th.accent()),
+            Span::raw(gap),
+            Span::styled(modes, th.muted()),
+        ])
+    };
+    let room = l.width.saturating_sub(1) as usize;
+    let left = [
+        controls("  ", format!("shuffle:{shuffle}  repeat:{repeat}")),
+        controls(" ", format!("shuffle:{shuffle} repeat:{repeat}")),
+        controls(" ", format!("shuf:{shuffle} rep:{repeat}")),
+    ]
+    .into_iter()
+    .find(|line| line.width() <= room)
+    .unwrap_or_else(|| controls(" ", String::new()));
     f.render_widget(Paragraph::new(left), l);
     f.render_widget(
-        Paragraph::new(Span::styled(vol, theme::muted())).right_aligned(),
+        Paragraph::new(Span::styled(vol, th.muted())).right_aligned(),
         r,
     );
 }
 
 /// Draws vertical bars one column wide with a one-column gap, using eighth blocks.
-fn render_spectrum(buf: &mut Buffer, area: Rect, bars: &[f32]) {
+fn render_spectrum(buf: &mut Buffer, th: &Theme, area: Rect, bars: &[f32]) {
     const EIGHTHS: [&str; 9] = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
     let rows = area.height as usize;
     if rows == 0 {
@@ -302,14 +321,14 @@ fn render_spectrum(buf: &mut Buffer, area: Rect, bars: &[f32]) {
                 continue;
             }
             let color = if row as f32 / rows as f32 > 0.66 {
-                theme::GREEN
+                th.accent
             } else {
-                theme::GREEN_DIM
+                th.dim
             };
             let color = if row == 0 || fill == 8 {
                 color
             } else {
-                theme::GREEN
+                th.accent
             };
             buf[(x, y)].set_symbol(EIGHTHS[fill]).set_fg(color);
         }
@@ -317,6 +336,7 @@ fn render_spectrum(buf: &mut Buffer, area: Rect, bars: &[f32]) {
 }
 
 fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect) {
+    let th = app.theme;
     let focused = app.focus == Focus::Tracks && matches!(app.overlay, Overlay::None);
     let rate_limited = app.api.rate_limited_for();
     let title = if app.loading && !rate_limited.is_zero() {
@@ -340,11 +360,7 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(
         Paragraph::new(Span::styled(
             title,
-            if focused {
-                theme::heading()
-            } else {
-                theme::base()
-            },
+            if focused { th.heading() } else { th.base() },
         )),
         title_area,
     );
@@ -357,11 +373,11 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect) {
         let lines = vec![
             Line::from(Span::styled(
                 format!("Couldn't load {}:", app.view.title()),
-                Style::new().fg(theme::ERROR),
+                th.error(),
             )),
             Line::from(Span::raw(error.clone())),
             Line::default(),
-            Line::from(Span::styled(retry, theme::muted())),
+            Line::from(Span::styled(retry, th.muted())),
         ];
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), list_area);
         return;
@@ -383,31 +399,48 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 truncate(&main, width.saturating_sub(dur.len() + 2)) + " " + &dur
             };
-            let style = if is_playing {
-                theme::accent()
-            } else {
-                theme::base()
-            };
+            let style = if is_playing { th.accent() } else { th.base() };
             ListItem::new(Span::styled(text, style))
         })
         .collect();
-    let list = List::new(items).highlight_style(theme::selected(focused));
+    let list = List::new(items).highlight_style(th.selected(focused));
     f.render_stateful_widget(list, list_area, &mut app.track_state);
 }
 
+/// The bottom bar: the two panes as tabs (the focused one highlighted), how to switch
+/// between them, then either a status message or the keys for the focused pane.
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
-    let line = match app.visible_status() {
-        Some((msg, true)) => Line::from(Span::styled(
-            format!(" {msg}"),
-            Style::new().fg(theme::ERROR),
-        )),
-        Some((msg, false)) => Line::from(Span::styled(format!(" {msg}"), theme::accent())),
-        None => Line::from(Span::styled(
-            " Space play/pause · n/p next/prev · ←/→ seek · +/- vol · / search · d devices · ? help · q quit",
-            theme::muted(),
-        )),
+    let th = app.theme;
+    let tab = |label: &'static str, pane: Focus| {
+        let style = if app.focus == pane {
+            th.selected(true)
+        } else {
+            th.muted()
+        };
+        Span::styled(label, style)
     };
-    f.render_widget(Paragraph::new(line), area);
+    let mut spans = vec![
+        Span::raw(" "),
+        tab(" Library ", Focus::Sidebar),
+        Span::raw(" "),
+        tab(" Tracks ", Focus::Tracks),
+        Span::styled("  Tab", th.accent()),
+        Span::styled(" switch  │  ", th.muted()),
+    ];
+    spans.push(match app.visible_status() {
+        Some((msg, true)) => Span::styled(msg.to_string(), th.error()),
+        Some((msg, false)) => Span::styled(msg.to_string(), th.accent()),
+        None => Span::styled(
+            match app.focus {
+                Focus::Sidebar => "Enter open · / search · d devices · t theme · ? help · q quit",
+                Focus::Tracks => {
+                    "Enter play · Space pause · n/p skip · ←/→ seek · +/- vol · ? help"
+                }
+            },
+            th.muted(),
+        ),
+    });
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn popup(area: Rect, w: u16, h: u16) -> Rect {
@@ -420,18 +453,18 @@ fn popup(area: Rect, w: u16, h: u16) -> Rect {
     r
 }
 
-fn popup_block(title: &str) -> Block<'_> {
+fn popup_block<'a>(th: &Theme, title: &'a str) -> Block<'a> {
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(theme::border(true))
-        .title(Line::from(Span::styled(format!(" {title} "), theme::heading())).centered())
-        .style(theme::base())
+        .border_style(th.border(true))
+        .title(Line::from(Span::styled(format!(" {title} "), th.heading())).centered())
+        .style(th.base())
 }
 
-fn draw_help(f: &mut Frame, area: Rect) {
+fn draw_help(f: &mut Frame, th: &Theme, area: Rect) {
     let rows = [
         ("↑/↓  j/k", "move selection"),
-        ("Tab  h/l", "switch pane"),
+        ("Tab  h/l", "switch Library / Tracks"),
         ("Enter", "open / play"),
         ("Space", "play / pause"),
         ("n / p", "next / previous track"),
@@ -440,6 +473,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("s / r", "shuffle / repeat (off → all → one)"),
         ("/", "search tracks"),
         ("d", "devices (Spotify Connect)"),
+        ("t", "next color theme"),
         ("U", "install available update"),
         ("q  Ctrl-C", "quit"),
     ];
@@ -447,27 +481,31 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .iter()
         .map(|(k, d)| {
             Line::from(vec![
-                Span::styled(format!("  {k:<11}"), theme::accent()),
+                Span::styled(format!("  {k:<11}"), th.accent()),
                 Span::raw(*d),
             ])
         })
         .collect();
     let r = popup(area, 54, rows.len() as u16 + 2);
     f.render_widget(Clear, r);
-    f.render_widget(Paragraph::new(lines).block(popup_block("Keys")), r);
+    f.render_widget(Paragraph::new(lines).block(popup_block(th, "Keys")), r);
 }
 
-fn draw_search(f: &mut Frame, area: Rect, input: &str) {
+fn draw_search(f: &mut Frame, th: &Theme, area: Rect, input: &str) {
     let r = popup(area, 60, 3);
     f.render_widget(Clear, r);
     let text = Line::from(vec![
         Span::raw(format!(" {input}")),
-        Span::styled("█", theme::accent()),
+        Span::styled("█", th.accent()),
     ]);
-    f.render_widget(Paragraph::new(text).block(popup_block("Search Spotify")), r);
+    f.render_widget(
+        Paragraph::new(text).block(popup_block(th, "Search Spotify")),
+        r,
+    );
 }
 
 fn draw_devices(f: &mut Frame, app: &mut App, area: Rect) {
+    let th = app.theme;
     let this_device: Vec<bool> = match &app.overlay {
         Overlay::Devices { devices, .. } => devices.iter().map(|d| app.is_this_device(d)).collect(),
         _ => return,
@@ -512,10 +550,10 @@ fn draw_devices(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         "Spotify Connect devices"
     };
-    let block = popup_block(title).title_bottom(
+    let block = popup_block(&th, title).title_bottom(
         Line::from(Span::styled(
             " ↑/↓ choose · Enter play there · r refresh · Esc close ",
-            theme::muted(),
+            th.muted(),
         ))
         .centered(),
     );
@@ -523,22 +561,19 @@ fn draw_devices(f: &mut Frame, app: &mut App, area: Rect) {
     if devices.is_empty() {
         let lines = match error {
             Some(e) => vec![
-                Line::from(Span::styled(
-                    " Couldn't load devices:",
-                    Style::new().fg(theme::ERROR),
-                )),
+                Line::from(Span::styled(" Couldn't load devices:", th.error())),
                 Line::from(format!(" {e}")),
-                Line::from(Span::styled(" Press r to try again.", theme::muted())),
+                Line::from(Span::styled(" Press r to try again.", th.muted())),
             ],
             None if *loading => vec![Line::from(Span::styled(
                 " Looking for devices…",
-                theme::muted(),
+                th.muted(),
             ))],
             None => vec![
                 Line::from(" No devices found."),
                 Line::from(Span::styled(
                     " Open Spotify on a phone, computer or speaker, then press r.",
-                    theme::muted(),
+                    th.muted(),
                 )),
             ],
         };
@@ -559,14 +594,14 @@ fn draw_devices(f: &mut Frame, app: &mut App, area: Rect) {
             ListItem::new(Line::from(vec![
                 Span::raw(left),
                 Span::raw(" ".repeat(pad)),
-                Span::styled(right, theme::muted()),
+                Span::styled(right, th.muted()),
             ]))
         })
         .collect();
     f.render_stateful_widget(
         List::new(items)
             .block(block)
-            .highlight_style(theme::selected(true)),
+            .highlight_style(th.selected(true)),
         r,
         state,
     );
@@ -698,5 +733,177 @@ mod tests {
         assert!(render(&mut app).contains("Playlists (loading…)"));
         app.playlists_error = Some("offline".into());
         assert!(render(&mut app).contains("Playlists (retrying…)"));
+    }
+
+    fn buffer(app: &mut crate::app::App) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(110, 34)).unwrap();
+        terminal.draw(|f| super::draw(f, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    #[tokio::test]
+    async fn no_background_is_painted_by_default() {
+        let mut app = demo();
+        let buf = buffer(&mut app);
+        let painted = buf
+            .content()
+            .iter()
+            .filter(|c| c.bg != ratatui::style::Color::Reset)
+            .count();
+        // Only the selected row's highlight bar has a background.
+        assert!(painted <= 110, "{painted} cells have a background");
+        assert_eq!(buf[(60, 10)].bg, ratatui::style::Color::Reset);
+    }
+
+    #[tokio::test]
+    async fn a_background_can_be_configured() {
+        let mut app = demo();
+        app.theme.background = Some(ratatui::style::Color::Black);
+        assert_eq!(buffer(&mut app)[(60, 10)].bg, ratatui::style::Color::Black);
+    }
+
+    #[tokio::test]
+    async fn the_theme_recolors_the_interface() {
+        let mut app = demo();
+        app.theme = super::theme::Theme::preset("red").unwrap();
+        let buf = buffer(&mut app);
+        let title = (0..buf.area.width)
+            .find(|&x| buf[(x, 0)].symbol() == "T")
+            .expect("title");
+        assert_eq!(buf[(title, 0)].fg, app.theme.accent);
+    }
+
+    fn render_sized(app: &mut crate::app::App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| super::draw(f, app)).unwrap();
+        let buf = terminal.backend().buffer();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_logo_shows_when_the_terminal_is_wide_enough() {
+        let mut app = demo();
+        let wide = render_sized(&mut app, 120, 36);
+        assert!(wide.contains(super::logo::LOGO[0].trim_end()), "{wide}");
+        assert!(wide.contains(super::logo::LOGO[8].trim()), "{wide}");
+        assert!(wide.contains(super::logo::WORDMARK), "{wide}");
+        let narrow = render_sized(&mut app, 90, 36);
+        assert!(
+            !narrow.contains(super::logo::LOGO[0].trim_end()),
+            "{narrow}"
+        );
+    }
+
+    /// The bottom bar's text and the x position of `label` in it.
+    fn bottom_bar(buf: &ratatui::buffer::Buffer, label: &str) -> (String, Option<u16>) {
+        let y = buf.area.height - 2;
+        let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+        let x = row
+            .find(label)
+            .map(|byte| row[..byte].chars().count() as u16);
+        (row, x)
+    }
+
+    #[tokio::test]
+    async fn bottom_bar_shows_the_panes_as_tabs_and_their_keys() {
+        use crate::app::Focus;
+        let mut app = demo();
+        app.status = None;
+
+        app.focus = Focus::Tracks;
+        let buf = buffer(&mut app);
+        let (row, tracks) = bottom_bar(&buf, "Tracks");
+        let (_, library) = bottom_bar(&buf, "Library");
+        for needle in ["Library", "Tracks", "Tab", "Enter play", "Space pause"] {
+            assert!(row.contains(needle), "missing {needle:?} in {row:?}");
+        }
+        let y = buf.area.height - 2;
+        assert_eq!(buf[(tracks.unwrap(), y)].bg, app.theme.accent);
+        assert_ne!(buf[(library.unwrap(), y)].bg, app.theme.accent);
+
+        app.focus = Focus::Sidebar;
+        let buf = buffer(&mut app);
+        let (row, library) = bottom_bar(&buf, "Library");
+        assert!(row.contains("Enter open"), "{row:?}");
+        assert_eq!(buf[(library.unwrap(), y)].bg, app.theme.accent);
+    }
+
+    #[tokio::test]
+    async fn status_messages_keep_the_tabs_visible() {
+        let mut app = demo();
+        app.set_status("Playing on Tv");
+        let (row, _) = bottom_bar(&buffer(&mut app), "Tab");
+        assert!(row.contains("Library"), "{row:?}");
+        assert!(row.contains("Playing on Tv"), "{row:?}");
+    }
+
+    #[tokio::test]
+    async fn player_controls_fit_next_to_the_volume() {
+        let mut app = demo();
+        for width in [100, 110, 140] {
+            let text = render_sized(&mut app, width, 34);
+            let row = text.lines().find(|l| l.contains("[Vol :")).unwrap();
+            assert!(
+                row.contains("repeat:off") || row.contains("rep:off"),
+                "{width} columns: {row:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn bottom_bar_hints_fit_a_110_column_terminal() {
+        let mut app = demo();
+        app.status = None;
+        for focus in [crate::app::Focus::Sidebar, crate::app::Focus::Tracks] {
+            app.focus = focus;
+            let (row, _) = bottom_bar(&buffer(&mut app), "Tab");
+            assert!(row.contains("? help"), "{row:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_selected_sidebar_entry_is_the_highlighted_one() {
+        let mut app = demo();
+        app.focus = crate::app::Focus::Sidebar;
+        app.sidebar.select(Some(1));
+        let buf = render_buffer_sized(&mut app, 120, 36);
+        // Everything above the bottom bar, whose focused tab is highlighted too.
+        let highlighted: Vec<String> = (0..buf.area.height - 2)
+            .filter(|&y| buf[(3, y)].bg == app.theme.accent)
+            .map(|y| (0..40).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect();
+        assert_eq!(highlighted.len(), 1, "{highlighted:?}");
+        assert!(highlighted[0].contains("Liked Songs"), "{highlighted:?}");
+    }
+
+    fn render_buffer_sized(
+        app: &mut crate::app::App,
+        width: u16,
+        height: u16,
+    ) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| super::draw(f, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    #[tokio::test]
+    async fn switching_themes_recolors_the_borders_too() {
+        use super::theme::Theme;
+        let mut app = demo();
+        let mut terminal = Terminal::new(TestBackend::new(120, 36)).unwrap();
+        app.theme = Theme::preset("amber").unwrap();
+        terminal.draw(|f| super::draw(f, &mut app)).unwrap();
+        app.theme = Theme::preset("mono").unwrap();
+        terminal.draw(|f| super::draw(f, &mut app)).unwrap();
+        let buf = terminal.backend().buffer();
+        // The top-left corner of the outer frame.
+        assert_eq!(buf[(0, 0)].fg, app.theme.border);
     }
 }
