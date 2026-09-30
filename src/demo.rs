@@ -128,6 +128,6 @@ pub fn app(tx: mpsc::UnboundedSender<AppEvent>) -> App {
     app.now.position_at = Some(std::time::Instant::now());
     app.now.device_name = Some("Talyxel Sound".into());
     app.now.volume = 75;
-    app.update_available = Some("0.4.0".into());
+    app.update_available = Some("0.5.0".into());
     app
 }

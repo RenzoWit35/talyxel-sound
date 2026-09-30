@@ -5,17 +5,40 @@ A terminal Spotify client written in Rust. Talyxel Sound registers itself as a r
 client, and it shows up in the device list on your phone and desktop.
 
 ```
-┌──────────────────── Talyxel Sound - TUI v0.1.0 ─────────────────────┐
-│     .-~~~~~~~~~~~~-.      │  Now Playing                            │
-│   .'  ____________  '.    │  Pink Floyd - Wish You Were Here        │
-│  /   |____    ____|   \   │  Wish You Were Here (1975)              │
-│ |         |  |         |  │─────────────────────────────────────────│
-│  \        |  |        /   │  █ █ ▇ ▅ ▃ ▁   ▂ ▅ ▇ █ █ ▇ ▆ ▅ ▃ ▂       │
-│   '.      |__|      .'    │  [>==========--------------] 2:54 / 5:59 │
-│ Browse                    │  [Playing]  [<<] [||] [>>]   [Vol : 75%] │
-│ Playlists                 │  Discover Weekly (5)                    │
-│   Discover Weekly         │  ♪ Wish You Were Here — Pink Floyd  5:59 │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────── Talyxel Sound - TUI v0.4.0 ────────────────────────────────────────┐
+│ __/\\\\\\\\\\\\\\\_____/\\\\\\\\\\\___          │  Now Playing                                             │
+│  _\///////\\\/////____/\\\/////////\\\_         │  Pink Floyd - Wish You Were Here                         │
+│   _______\/\\\________\//\\\______\///__        │  Wish You Were Here (1975)                               │
+│    _______\/\\\_________\////\\\_________       │  2/5                                   on Talyxel Sound  │
+│     _______\/\\\____________\////\\\______      │                                                          │
+│      _______\/\\\_______________\////\\\___     │──────────────────────────────────────────────────────────│
+│       _______\/\\\________/\\\______\//\\\__    │                                                          │
+│        _______\/\\\_______\///\\\\\\\\\\\/___   │                                                          │
+│         _______\///__________\///////////_____  │                                                          │
+│            T A L Y X E L  S O U N D             │                                                          │
+│                                                 │                                                          │
+│ Browse                                          │                                                          │
+│   Search                                        │  ▂ ▂ ▂ ▂                                                 │
+│   Liked Songs                                   │  █ █ █ █ █ ▆ ▃                       ▁ ▂ ▂ ▂ ▂ ▁         │
+│   Recently Played                               │  █ █ █ █ █ █ █ ▇ ▄ ▁           ▃ ▅ ▇ █ █ █ █ █ █ █ ▇ ▆   │
+│   Devices                                       │  █ █ █ █ █ █ █ █ █ █ ▇ ▆ ▆ ▇ █ █ █ █ █ █ █ █ █ █ █ █ █   │
+│                                                 │  [>==================---------------------] 2:54 / 5:59  │
+│ Playlists (4)                                   │  [Playing] [<<] [||] [>>] shuf:off rep:off  [Vol : 75%]  │
+│   Starred                                       │──────────────────────────────────────────────────────────│
+│   Discover Weekly                               │  Discover Weekly (5)                                     │
+│   90s Rock                                      │                                                          │
+│   Ambient                                       │    Shine On You Crazy Diamond — Pink Floyd       13:31   │
+│                                                 │  ♪ Wish You Were Here — Pink Floyd                5:59   │
+│                                                 │    Welcome to the Machine — Pink Floyd            7:31   │
+│                                                 │    Have a Cigar — Pink Floyd                      5:08   │
+│                                                 │    Time — Pink Floyd                              6:53   │
+│                                                 │                                                          │
+│                                                 │                                                          │
+│                                                 │                                                          │
+│                                                 │                                                          │
+│                                                 │                                                          │
+│  Library   Tracks   Tab switch  │  Enter play · Space pause · n/p skip · ←/→ seek · +/- vol · ? help       │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Features
@@ -28,6 +51,8 @@ client, and it shows up in the device list on your phone and desktop.
   shuffle/repeat) to the app as they happen. Playlist and Liked Songs edits are picked up
   automatically.
 - **Spectrum visualizer**: a real FFT of the audio playing locally.
+- **Recolorable**: six built-in color themes (press `t`), or your own colors in `config.toml`.
+  The app uses your terminal's background.
 - **Media keys** and the OS media overlay (Windows SMTC, macOS Now Playing, MPRIS on Linux).
 - **Secure login**: a one-time browser login. The refresh token is kept in the OS credential
   store (Windows Credential Manager / macOS Keychain / Secret Service) and never in plaintext.
@@ -97,7 +122,7 @@ moving playback there and back.
 | Key            | Action                                  |
 |----------------|-----------------------------------------|
 | ↑/↓, j/k       | Move selection                          |
-| Tab, h/l       | Switch between sidebar and list         |
+| Tab, h/l       | Switch between Library and Tracks       |
 | Enter          | Open item / play track                  |
 | Space          | Play / pause                            |
 | n / p          | Next / previous track                   |
@@ -106,6 +131,7 @@ moving playback there and back.
 | s / r          | Shuffle / repeat (off→all→one)          |
 | /              | Search                                  |
 | d              | Devices: Enter plays there, r refreshes |
+| t              | Next color theme (saved)                |
 | U              | Install available update                |
 | ?              | Help                                    |
 | q, Ctrl-C      | Quit                                    |
@@ -127,9 +153,37 @@ update_repo_name = "talyxel-sound"
 # Optional: your own Spotify developer app for Web API requests (see "Rate limits" below)
 # client_id = "..."
 # redirect_uri = "http://127.0.0.1:8898/login"   # the default
+theme = "green"                # see "Colors" below
 ```
 
 Logs are written to `talyxel.log` in the data directory. Set `TALYXEL_LOG=debug` for more detail.
+
+## Colors
+
+Press `t` to switch between the built-in themes: `green`, `blue`, `purple`, `amber`, `red`
+and `mono` (your terminal's own palette). The choice is saved as `theme` in `config.toml`.
+Text uses your terminal's text color and there is no background, so the app suits light and
+dark terminals.
+
+To pick your own colors, add a `[colors]` table at the end of `config.toml`. Each color replaces
+the one from the theme and can be `"#rrggbb"`, a name such as `"cyan"` or `"light-magenta"`,
+or a terminal palette number from `0` to `255`:
+
+```toml
+[colors]
+text = "#e0e0e0"          # track names and other plain text
+accent = "#ff79c6"        # headings, the progress bar, the selection bar
+dim = "#6272a4"           # the empty part of the progress bar, quiet spectrum bars
+border = "#bd93f9"
+muted = "#8b8fa3"         # hints, album names
+error = "#ff5555"
+badge = "#f1fa8c"         # the "update available" notice
+selection_text = "#282a36" # text on the selection bar
+background = "#282a36"    # leave out to use the terminal's background
+```
+
+A color the app doesn't understand is reported in the status bar and the theme's own color is
+used instead.
 
 ## Rate limits: using your own Spotify app
 
